@@ -31,8 +31,8 @@ unsigned long time = 0;         // the last time the output settingsBtnInPin was
 int debounce = 200;   // the debounce time, increase if the output flickers
 
 float fac[] = {4.0f, 3.0f, 2.0f, 1.0f+1.0f/3.0f, 1.0f, 0.5f, 1.0f/3.0f, 0.25f, 1.0f/6.0f, 0.125f};
-int skips[] =   {3,    2,    1,    1,              0,    0,    0,         0,     0,         0     };
-int subs[] =    {0,    0,    0,    0,              0,    1,    2,         3,     5,         7     };
+int skips[] =   {3,    2,    1,    3,              0,    0,    0,         0,     0,         0     };
+int subs[] =    {0,    0,    0,    2,              0,    1,    2,         3,     5,         7     };
 int setIndexDef = 5;
 int setIndex = -1;
 int skipCounter;
@@ -94,10 +94,10 @@ void loop() {
   bool subDivsChanged = setSetIndex();
   checkPulse();
   if (pulseRateSet && millis() >= nextPulseTS) {
-    if (currentSubs() != subCounter) {
+    if (currentSubs() > subCounter) {
       pulseOutput();
       subCounter++;
-      nextPulseTS = lastPulseTS + (unsigned long)((subCounter * currentFac() * pulseRate) + .5f);
+      nextPulseTS = lastPulseTS + (unsigned long)(((subCounter + 1) * currentFac() * pulseRate) + .5f);
     }
   }
 }
@@ -108,20 +108,20 @@ void checkPulse() {
     if (!firstPulseSeen) {
       firstPulseSeen = true;
       lastPulseTS = thisPulseTS;
-      skipCounter = currentSkips();
+      skipCounter = 0;
     }
     else if ((thisPulseTS - lastPulseTS) > minDeltaPulseTS) {
       pulseRate = thisPulseTS - lastPulseTS;
       lastPulseTS = thisPulseTS;
       pulseRateSet = true;
-      subCounter = 0;
-      if (skipCounter <= 0) {
-        skipCounter = currentSkips();
+      if (skipCounter >= currentSkips()) {
+        subCounter = 0;
+        skipCounter = 0;
         pulseOutput();
         nextPulseTS = thisPulseTS + ((pulseRate * currentFac()) + 0.5f);
       }
       else {
-        --skipCounter;
+        ++skipCounter;
       }
     }
   }
