@@ -30,7 +30,7 @@ int previous = LOW;    // the previous reading from the subDivBtnInPin pin
 unsigned long time = 0;         // the last time the output subDivBtnInPin was toggled
 int debounce = 200;   // the debounce time, increase if the output flickers
 
-float subDivSettings[] = {4.0f, 3.0f, 2.0f, 1.0f, 0.5f, 0.3333333f, 0.25f, 0.1666666f, 0.125f};
+float subDivSettings[] = {4.0f, 3.0f, 2.0f, 1.0f, 0.5f, 1.0f/3.0f, 0.25f, 1.0f/6.0f, 0.125f};
 int eighthsSubDivSettingIndex = 4;
 int subDivSettingsIndex = -1;
 
@@ -50,22 +50,15 @@ void loop() {
   audioValue = analogRead(audioPin);
   thresholdValue = analogRead(thresholdPin);
   bool subDivsChanged = setSubDivs();
-  if (subDivsChanged) {
-    skipCounter = (int)currentSubDiv();
-  }
   bool onPulse = checkPulseRate() == 2;
   if (onPulse) {
     nextSubDivTS = lastPulseTS;
-    if ((int)currentSubDiv()) {
-      if (--skipCounter) return;
-    }
   }
 
   unsigned long now = millis();
-  if (pulseRateSet && !skipCounter && (onPulse || (now >= nextSubDivTS && now <= expectedNextPulseTS - allowedPulseDelay))) {
+  if (pulseRateSet && (onPulse || (now >= nextSubDivTS && now <= expectedNextPulseTS - allowedPulseDelay))) {
     pulseOutput(); // output subDiv
     nextSubDivTS += (unsigned long)((currentSubDiv() * pulseRate) + .5f);
-    skipCounter = (int)currentSubDiv(); 
   }
 }
 
@@ -113,7 +106,11 @@ int checkPulseRate() {
       lastPulseTS = thisPulseTS;
       expectedNextPulseTS = thisPulseTS + (pulseRate + 0.5f);
       pulseRateSet = true;
-      onPulse = true;
+      if (skipCounter <= 0) {
+        onPulse = true;
+        skipCounter = (int)currentSubDiv();
+      }
+      --skipCounter;
     }
   }
   else if (firstPulseSeen && stopOnNoPulse && (millis() - lastPulseTS) > stopDelay) {
