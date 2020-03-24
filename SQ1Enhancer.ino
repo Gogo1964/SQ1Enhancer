@@ -1,146 +1,165 @@
 /*
-  Analog Input
-
-  Demonstrates analog input by reading an analog sensor on analog pin 0 and
-  turning on and off a light emitting diode(LED) connected to digital pin 13.
-  The amount of time the LED will be on and off depends on the value obtained
-  by analogRead().
-
-  The circuit:
-  - potentiometer
-    center pin of the potentiometer to the analog input 0
-    one side pin (either one) to ground
-    the other side pin to +5V
-  - LED
-    anode (long leg) attached to digital output 13
-    cathode (short leg) attached to ground
-
-  - Note: because most Arduinos have a built-in LED attached to pin 13 on the
-    board, the LED is optional.
-
-  created by David Cuartielles
-  modified 30 Aug 2011
-  By Tom Igoe
-
-  This example code is in the public domain.
-
-  http://www.arduino.cc/en/Tutorial/AnalogInput
+  SQ1Enhancer
+  created by Karsten Gorkow
 */
 
-int audioPin = A0;    // select the input pin for the audio
-int thresholdPin = A1;    // select the input pin for the potentiometer
+int audioPin = A0; // input pin for the audio
+int thresholdPin = A1; // input pin for the threshold pot
+int swingPotPin = A2; // input pin for the swing pot
 int ledPin = LED_BUILTIN;      // select the pin for the LED
-int outputPin = 2;
-int subDivInPin = 3;
-int audioValue = 0;  // variable to store the value coming from the sensor
+int syncOutPin = 2;  
+int skipsBtnInPin = 3; // input for button to switch skips
+int subsBtnInPin = 4; // input for button to switch subs
+
+int audioValue = 0;  // variable to store the value coming from the audio in
 int thresholdValue = 0;
+int swingValue = 0;
 bool firstPulseSeen = false;
-unsigned long tsLastPulse;
-unsigned long tsThisPulse;
+unsigned long lastPulseTS;
+unsigned long thisPulseTS;
+unsigned long subStartPulseTS;
 int minDeltaPulseTS = 150;
+bool pulseRateSet = false;
 float pulseRate;
-unsigned long nextSubDivTS = 0;
-int subdivs = 4;
-int subDivCounter = 1;
+unsigned long nextPulseTS = 0;
 int outputPulseTime = 15;
+bool stopOnNoPulse = true;
 int stopDelay = 3000;
 
-int state = HIGH;      // the current state of the output pin
-int reading;           // the current reading from the input pin
-int previous = LOW;    // the previous reading from the input pin
-unsigned long time = 0;         // the last time the output pin was toggled
-int debounce = 200;   // the debounce time, increase if the output flickers
-int subdivSettings[11] = {-4, -3, -2, 1, 2, 3, 4, 5, 6, 7, 8};
-int subdivSettingsIndex = 6;
+struct ToggleButton {
+  int inPin;
+  int state;      // the current toggled state of the button
+  int reading;           // the current reading from the button's pin
+  int previous;    // the previous reading from the button's pin
+  unsigned long time = 0;  // the last time the output was toggled
+};
 
-void pulseOutput();
+const int buttonDebounceTime = 200;
+
+ToggleButton skipsBtn;
+ToggleButton subsBtn;
+
+const int maxSkips = 3;
+const int maxSubs = 7;
+
+int skips = 0;
+int subs = 1;
+int skipCounter;
+int subCounter;
+
+void setupToggleButton(int pin, ToggleButton* pbtn) {
+  pbtn->inPin = pin;
+  pbtn->state = HIGH;
+  pbtn->previous = LOW;
+  pbtn->time = 0;
+  pinMode(pbtn->inPin, INPUT);
+}
 
 void setup() {
   // declare the ledPin as an OUTPUT:
   pinMode(ledPin, OUTPUT);
-  pinMode(outputPin, OUTPUT);
-  pinMode(subDivInPin, INPUT);
-  Serial.begin(9600);
+  pinMode(syncOutPin, OUTPUT);
+  setupToggleButton(3, &skipsBtn);
+  setupToggleButton(4, &subsBtn);
+  Serial.begin(115200);
 }
 
-void setSubDivs() {
-  reading = digitalRead(subDivInPin);
+void printInfo(char* head) {
+  Serial.print(head);
+  Serial.print("\tbpm=\t");
+  Serial.print(60000 / pulseRate);
+  Serial.print("\tskips=\t");
+  Serial.print(skips);
+  Serial.print("\tcnt=\t");
+  Serial.print(skipCounter);
+  Serial.print("\tsubs=\t");
+  Serial.print(subs);
+  Serial.print("\tcnt=\t");
+  Serial.print(subCounter);
+  Serial.print("\tfac=\t");
+  Serial.println(currentFac());
+}
 
+bool setStepVal(ToggleButton* pbtn, int* val, int minVal, int maxVal) {
+  if (*val < minVal) *val = minVal;
+  if (*val > maxVal) *val = maxVal;
+  bool oldState = pbtn->state;
+  pbtn->reading = digitalRead(pbtn->inPin);
   // if the input just went from LOW and HIGH and we've waited long enough
   // to ignore any noise on the circuit, toggle the output pin and remember
   // the time
-  if (reading == HIGH && previous == LOW && millis() - time > debounce) {
-    if (state == HIGH)
-      state = LOW;
+  if (pbtn->reading == HIGH && pbtn->previous == LOW && millis() - pbtn->time > buttonDebounceTime) {
+    if (pbtn->state == HIGH)
+      pbtn->state = LOW;
     else
-      state = HIGH;
+      pbtn->state = HIGH;
 
-    subdivSettingsIndex++;
-    if (subdivSettingsIndex >= 11) {
-      subdivSettingsIndex = 0;
+    (*val)++;
+    if (*val > maxVal) {
+      *val = minVal;
     }
-    subdivs = subdivSettings[subdivSettingsIndex];
-    time = millis();    
+    pbtn->time = millis();    
   }
 
-  previous = reading;
+  pbtn->previous = pbtn->reading;
+  return oldState != pbtn->state;
+}
+
+float currentFac() {
+  return ((float)(skips + 1)) / ((float) (subs + 1));
+}
+
+void pulseOutput() {
+  digitalWrite(ledPin, HIGH);
+  digitalWrite(syncOutPin, HIGH);
+  delay(outputPulseTime);
+  digitalWrite(ledPin, LOW);
+  digitalWrite(syncOutPin, LOW);
+}
+
+void checkPulse() {
+  if (audioValue > thresholdValue) {
+    thisPulseTS = millis();
+    if (!firstPulseSeen) {
+      firstPulseSeen = true;
+      lastPulseTS = thisPulseTS;
+      skipCounter = skips;
+    }
+    else if ((thisPulseTS - lastPulseTS) > minDeltaPulseTS) {
+      pulseRate = thisPulseTS - lastPulseTS;
+      lastPulseTS = thisPulseTS;
+      pulseRateSet = true;
+      if (skipCounter == skips) {
+        skipCounter = 0;
+        if (subCounter > subs)
+          subCounter = 0;
+        if (!subCounter) {
+          nextPulseTS = thisPulseTS;
+          subStartPulseTS = thisPulseTS;
+        }
+      }
+      else {
+        skipCounter++;
+      }
+      printInfo("P");
+    }
+  }
+  else if (firstPulseSeen && stopOnNoPulse && (millis() - lastPulseTS) > stopDelay) {
+    firstPulseSeen = false;
+    pulseRateSet = false;
+  }
 }
 
 void loop() {
   audioValue = analogRead(audioPin);
   thresholdValue = analogRead(thresholdPin);
-  int sindex = subdivSettingsIndex; 
-  setSubDivs();
-  if (sindex != subdivSettingsIndex) {
-    subDivCounter = 0;
+  if (setStepVal(&skipsBtn, &skips, 0, maxSkips)) skipCounter = 0;
+  if (setStepVal(&subsBtn, &subs, 0, maxSubs)) subCounter = 0;
+  checkPulse();
+  if (pulseRateSet && millis() >= nextPulseTS && subCounter <= subs) {
+    pulseOutput();
+    subCounter++;
+    nextPulseTS = subStartPulseTS + (unsigned long)((subCounter * currentFac() * pulseRate) + .5f);
+    printInfo("S");
   }
-  if (audioValue > thresholdValue) {
-    tsThisPulse = millis();
-    if (!firstPulseSeen) {
-      firstPulseSeen = true;
-      tsLastPulse = tsThisPulse;
-    }
-    else if ((tsThisPulse - tsLastPulse) > minDeltaPulseTS) {
-      if (subdivs > 0) {
-        pulseRate = (float)(tsThisPulse - tsLastPulse) / (float)subdivs; // subdiv pulse rate
-        Serial.print("bpm=\t");
-        Serial.print(pulseRate);
-        Serial.print("\t");
-        Serial.println(60000 / (pulseRate * subdivs));
-        nextSubDivTS = tsThisPulse + (int)(pulseRate + .5f);
-        subDivCounter = 1;
-        pulseOutput(); // output this pulse
-      }
-      else {
-        pulseRate = tsThisPulse - tsLastPulse;
-        Serial.print("bpm=\t");
-        Serial.println((60000 * -subdivs) / pulseRate);
-        if (subDivCounter == 0) {
-          pulseOutput();
-          subDivCounter = subdivs + 1;
-        }
-        else {
-          ++subDivCounter;
-        }
-      }
-      tsLastPulse = tsThisPulse;
-    }
-  }
-  else if (firstPulseSeen && nextSubDivTS > 0 && subDivCounter < subdivs && millis() >= nextSubDivTS) {
-    ++subDivCounter;
-    nextSubDivTS = tsLastPulse + (int)((subDivCounter * pulseRate) + .5f);
-    pulseOutput(); // output subdiv
-  }
-  else if (firstPulseSeen && (millis() - tsLastPulse) > stopDelay) {
-    firstPulseSeen = false; 
-    subDivCounter = 0;
-  }
-}
-
-void pulseOutput() {
-  digitalWrite(ledPin, HIGH);
-  digitalWrite(outputPin, HIGH);
-  delay(outputPulseTime);
-  digitalWrite(ledPin, LOW);
-  digitalWrite(outputPin, LOW);
 }
