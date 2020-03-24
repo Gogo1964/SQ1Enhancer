@@ -17,6 +17,7 @@ int swingValue = 0;
 bool firstPulseSeen = false;
 unsigned long lastPulseTS;
 unsigned long thisPulseTS;
+unsigned long subStartPulseTS;
 int minDeltaPulseTS = 150;
 bool pulseRateSet = false;
 float pulseRate;
@@ -38,7 +39,7 @@ const int buttonDebounceTime = 200;
 ToggleButton skipsBtn;
 ToggleButton subsBtn;
 
-const int maxSkips = 7;
+const int maxSkips = 3;
 const int maxSubs = 7;
 
 int skips = 0;
@@ -60,7 +61,7 @@ void setup() {
   pinMode(syncOutPin, OUTPUT);
   setupToggleButton(3, &skipsBtn);
   setupToggleButton(4, &subsBtn);
-  Serial.begin(9600);
+  Serial.begin(115200);
 }
 
 void printInfo(char* head) {
@@ -129,10 +130,13 @@ void checkPulse() {
       lastPulseTS = thisPulseTS;
       pulseRateSet = true;
       if (skipCounter == skips) {
-        subCounter = 0;
         skipCounter = 0;
-        pulseOutput();
-        nextPulseTS = thisPulseTS + ((pulseRate * currentFac()) + 0.5f);
+        if (subCounter > subs)
+          subCounter = 0;
+        if (!subCounter) {
+          nextPulseTS = thisPulseTS;
+          subStartPulseTS = thisPulseTS;
+        }
       }
       else {
         skipCounter++;
@@ -149,13 +153,13 @@ void checkPulse() {
 void loop() {
   audioValue = analogRead(audioPin);
   thresholdValue = analogRead(thresholdPin);
-  setStepVal(&skipsBtn, &skips, 0, maxSkips);
-  setStepVal(&subsBtn, &subs, 0, maxSubs);
+  if (setStepVal(&skipsBtn, &skips, 0, maxSkips)) skipCounter = 0;
+  if (setStepVal(&subsBtn, &subs, 0, maxSubs)) subCounter = 0;
   checkPulse();
-  if (pulseRateSet && millis() >= nextPulseTS && subs != subCounter) {
+  if (pulseRateSet && millis() >= nextPulseTS && subCounter <= subs) {
     pulseOutput();
     subCounter++;
-    nextPulseTS = lastPulseTS + (unsigned long)(((subCounter + 1) * currentFac() * pulseRate) + .5f);
+    nextPulseTS = subStartPulseTS + (unsigned long)((subCounter * currentFac() * pulseRate) + .5f);
     printInfo("S");
   }
 }
