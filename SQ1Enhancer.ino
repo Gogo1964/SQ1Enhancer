@@ -57,13 +57,15 @@ void setupToggleButton(int pin, ToggleButton* pbtn) {
 void setup() {
   // declare the ledPin as an OUTPUT:
   pinMode(ledPin, OUTPUT);
+  pinMode(syncOutPin, OUTPUT);
   setupToggleButton(3, &skipsBtn);
   setupToggleButton(4, &subsBtn);
   Serial.begin(9600);
 }
 
-void printInfo() {
-  Serial.print("bpm=\t");
+void printInfo(char* head) {
+  Serial.print(head);
+  Serial.print("\tbpm=\t");
   Serial.print(60000 / pulseRate);
   Serial.print("\tskips=\t");
   Serial.print(skips);
@@ -93,7 +95,7 @@ bool setStepVal(ToggleButton* pbtn, int* val, int minVal, int maxVal) {
 
     (*val)++;
     if (*val > maxVal) {
-      skips = minVal;
+      *val = minVal;
     }
     pbtn->time = millis();    
   }
@@ -126,16 +128,16 @@ void checkPulse() {
       pulseRate = thisPulseTS - lastPulseTS;
       lastPulseTS = thisPulseTS;
       pulseRateSet = true;
-      subCounter = 0;
-      if (skipCounter <= 0) {
-        skipCounter = skips;
+      if (skipCounter == skips) {
+        subCounter = 0;
+        skipCounter = 0;
         pulseOutput();
         nextPulseTS = thisPulseTS + ((pulseRate * currentFac()) + 0.5f);
       }
       else {
-        --skipCounter;
+        skipCounter++;
       }
-      printInfo();
+      printInfo("P");
     }
   }
   else if (firstPulseSeen && stopOnNoPulse && (millis() - lastPulseTS) > stopDelay) {
@@ -153,6 +155,7 @@ void loop() {
   if (pulseRateSet && millis() >= nextPulseTS && subs != subCounter) {
     pulseOutput();
     subCounter++;
-    nextPulseTS = lastPulseTS + (unsigned long)((subCounter * currentFac() * pulseRate) + .5f);
+    nextPulseTS = lastPulseTS + (unsigned long)(((subCounter + 1) * currentFac() * pulseRate) + .5f);
+    printInfo("S");
   }
 }
